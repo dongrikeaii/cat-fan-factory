@@ -9,6 +9,7 @@ import sqlite3
 import sys
 import time
 import unicodedata
+import uuid
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -19,10 +20,23 @@ import numpy as np
 from PIL import Image, ImageFilter, ImageOps
 from rapidocr_onnxruntime import RapidOCR
 
+from feishu_sync import (
+    FeishuClient,
+    FeishuSyncError,
+    SyncState,
+    collect_candidates,
+    configure_target,
+    load_target,
+    read_credentials,
+    sync_candidates,
+)
+
 
 ROOT = Path(__file__).resolve().parent
 CONFIG_PATH = ROOT / "config.json"
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
+FEISHU_TARGET_PATH = ROOT / "data" / "feishu_config.json"
+FEISHU_STATE_PATH = ROOT / "data" / "feishu_sync.sqlite3"
 
 
 def configure_console() -> None:
@@ -775,6 +789,72 @@ def show_status(config: dict[str, Any]) -> None:
     print(json.dumps(status, ensure_ascii=False, indent=2))
 
 
+def configure_feishu(url: str | None) -> None:
+    app_id, app_secret = read_credentials()
+    if not url:
+        url = input("请粘贴飞书多维表格完整网址：").strip()
+    target = configure_target(FEISHU_TARGET_PATH, url, app_id, app_secret)
+    print("飞书配置成功，必需字段已经检查并补齐。")
+    print(f"昵称将写入主字段：{target.primary_field}")
+    print("表格标识只保存在 data/feishu_config.json，不会提交到 GitHub。")
+
+
+def create_feishu_client() -> FeishuClient:
+    target = load_target(FEISHU_TARGET_PATH)
+    app_id, app_secret = read_credentials()
+    return FeishuClient(app_id, app_secret, target)
+
+
+def test_feishu_connection() -> None:
+    client = create_feishu_client()
+    primary_field = client.target.primary_field or client.ensure_schema()
+    stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    test_path = ROOT / "data" / "feishu_connection_test.jpg"
+    image = Image.new("RGB", (640, 360), (245, 241, 232))
+    image.save(test_path, quality=90)
+    try:
+        file_token = client.upload_image(test_path)
+        dedup_key = f"connection-test-{uuid.uuid4().hex[:16]}"
+        record_id = client.create_record(
+            {
+                primary_field: f"连接测试 {stamp}",
+                "成品图片": [{"file_token": file_token}],
+                "生成时间": stamp,
+                "查询码": "TEST",
+                "模板版本": "连接测试",
+                "生成批次": "连接测试",
+                "去重键": dedup_key,
+                "上传状态": "连接成功",
+            },
+            str(uuid.uuid4()),
+        )
+    finally:
+        test_path.unlink(missing_ok=True)
+    print(f"飞书连接测试成功，已创建一条测试记录：{record_id}")
+    print("请在表格中确认图片可见；测试记录之后可手动删除。")
+
+
+def sync_feishu(config: dict[str, Any]) -> None:
+    client = create_feishu_client()
+    candidates = collect_candidates(
+        ROOT,
+        project_path(config["paths"]["database"]),
+    )
+    if not candidates:
+        print("没有可同步的正式成品。待复核图片不会自动上传。")
+        return
+    state = SyncState(FEISHU_STATE_PATH)
+    try:
+        result = sync_candidates(client, candidates, state)
+    finally:
+        state.close()
+    print(
+        "同步完成："
+        f"新增 {result['uploaded']}，跳过重复 {result['skipped']}，"
+        f"失败 {result['failed']}。"
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="猫咪抱新粉丝图片批量生成器")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -789,6 +869,12 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("process", help="处理 inbox 中的现有截图")
     subparsers.add_parser("watch", help="持续监听 inbox 文件夹")
     subparsers.add_parser("status", help="查看处理状态")
+    feishu_setup = subparsers.add_parser(
+        "configure-feishu", help="配置飞书表格并检查字段"
+    )
+    feishu_setup.add_argument("--url", help="飞书多维表格完整网址")
+    subparsers.add_parser("test-feishu", help="上传一条飞书连接测试记录")
+    subparsers.add_parser("sync-feishu", help="同步正式成品到飞书多维表格")
     return parser
 
 
@@ -797,22 +883,32 @@ def main() -> int:
     config = load_config()
     ensure_directories(config)
     arguments = build_parser().parse_args()
-    if arguments.command == "prepare-templates":
-        prepare_templates(config, arguments.name)
-    elif arguments.command == "setup-template":
-        prepare_templates(config)
-    elif arguments.command == "choose-template":
-        choose_template(config)
-    elif arguments.command == "set-template":
-        set_active_template(config, arguments.name)
-    elif arguments.command == "list-templates":
-        list_templates(config)
-    elif arguments.command == "process":
-        process_inbox(config)
-    elif arguments.command == "watch":
-        watch(config)
-    elif arguments.command == "status":
-        show_status(config)
+    try:
+        if arguments.command == "prepare-templates":
+            prepare_templates(config, arguments.name)
+        elif arguments.command == "setup-template":
+            prepare_templates(config)
+        elif arguments.command == "choose-template":
+            choose_template(config)
+        elif arguments.command == "set-template":
+            set_active_template(config, arguments.name)
+        elif arguments.command == "list-templates":
+            list_templates(config)
+        elif arguments.command == "process":
+            process_inbox(config)
+        elif arguments.command == "watch":
+            watch(config)
+        elif arguments.command == "status":
+            show_status(config)
+        elif arguments.command == "configure-feishu":
+            configure_feishu(arguments.url)
+        elif arguments.command == "test-feishu":
+            test_feishu_connection()
+        elif arguments.command == "sync-feishu":
+            sync_feishu(config)
+    except FeishuSyncError as exc:
+        print(f"飞书操作失败：{exc}", file=sys.stderr)
+        return 1
     return 0
 
 

@@ -3,3 +3,4 @@ numpy==2.4.6
 opencv-python==5.0.0.93
 onnxruntime==1.29.0
 rapidocr_onnxruntime==1.4.4
+lark-oapi==1.7.2
