@@ -1,0 +1,21 @@
+.venv/
+__pycache__/
+*.pyc
+*.sqlite3
+*.csv
+*.log
+
+# Real follower screenshots, OCR data, generated images, and local state.
+archive/
+assets/
+inbox/*
+needs_review/
+output/*
+data/*
+
+!inbox/.gitkeep
+!output/.gitkeep
+!data/.gitkeep
+
+.DS_Store
+Thumbs.db

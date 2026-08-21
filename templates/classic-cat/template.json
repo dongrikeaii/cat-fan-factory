@@ -1,0 +1,10 @@
+{
+  "card_width_ratio": 1.16,
+  "angle_degrees": 20,
+  "center_x_ratio": 0.52,
+  "center_y_ratio": 0.72,
+  "shadow_blur": 16,
+  "shadow_opacity": 0.32,
+  "shadow_offset_x": 10,
+  "shadow_offset_y": 14
+}

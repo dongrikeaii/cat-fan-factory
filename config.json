@@ -1,0 +1,41 @@
+{
+  "paths": {
+    "inbox": "inbox",
+    "output_batches": "output/batches",
+    "data": "data",
+    "templates": "templates",
+    "active_template": "data/active_template.txt",
+    "database": "data/processed.sqlite3",
+    "csv_report": "data/processed_entries.csv"
+  },
+  "default_template": "classic-cat",
+  "row_detection": {
+    "red_r_min": 220,
+    "red_g_max": 120,
+    "red_b_max": 155,
+    "red_gap_min": 110,
+    "min_x_ratio": 0.52,
+    "min_width_ratio": 0.13,
+    "min_height_ratio": 0.012,
+    "min_area": 900
+  },
+  "ocr": {
+    "minimum_name_confidence": 0.72
+  },
+  "template_defaults": {
+    "card_width_ratio": 1.16,
+    "angle_degrees": 20,
+    "center_x_ratio": 0.52,
+    "center_y_ratio": 0.72,
+    "shadow_blur": 16,
+    "shadow_opacity": 0.32,
+    "shadow_offset_x": 10,
+    "shadow_offset_y": 14
+  },
+  "output": {
+    "jpeg_quality": 94
+  },
+  "watch": {
+    "poll_seconds": 3
+  }
+}
