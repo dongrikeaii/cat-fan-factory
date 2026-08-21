@@ -134,6 +134,11 @@ def make_dedup_key(normalized_name: str, avatar_hash: str, name_hash: str) -> st
     return hashlib.sha256(material).hexdigest()[:32]
 
 
+def make_client_token(idempotency_key: str) -> str:
+    digest = hashlib.sha256(idempotency_key.encode("utf-8")).digest()[:16]
+    return str(uuid.UUID(bytes=digest, version=4))
+
+
 def _batch_metadata(output_path: Path) -> tuple[str, str]:
     batch_root = output_path.parent.parent
     report_path = batch_root / "report.json"
@@ -344,7 +349,11 @@ class FeishuClient:
                 self.CreateAppTableFieldRequest.builder()
                 .app_token(self.target.app_token)
                 .table_id(self.target.table_id)
-                .client_token(str(uuid.uuid5(uuid.NAMESPACE_URL, field_name)))
+                .client_token(
+                    make_client_token(
+                        f"field:{self.target.app_token}:{self.target.table_id}:{field_name}"
+                    )
+                )
                 .request_body(
                     self.AppTableField.builder()
                     .field_name(field_name)
@@ -404,7 +413,7 @@ class FeishuClient:
             self.CreateAppTableRecordRequest.builder()
             .app_token(self.target.app_token)
             .table_id(self.target.table_id)
-            .client_token(client_token)
+            .client_token(make_client_token(client_token))
             .request_body(self.AppTableRecord.builder().fields(fields).build())
             .build()
         )
@@ -470,7 +479,7 @@ def sync_candidates(
             }
             record_id = client.create_record(
                 fields,
-                str(uuid.uuid5(uuid.NAMESPACE_URL, f"cat-fan:{key}")),
+                f"cat-fan:{key}",
             )
         except FeishuSyncError as exc:
             result["failed"] += 1

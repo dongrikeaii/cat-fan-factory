@@ -1,6 +1,7 @@
 import tempfile
 import unittest
 import sys
+import uuid
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -10,6 +11,7 @@ from feishu_sync import (
     FeishuTarget,
     SyncCandidate,
     SyncState,
+    make_client_token,
     make_dedup_key,
     parse_base_url,
     sync_candidates,
@@ -56,6 +58,12 @@ class FeishuSyncTests(unittest.TestCase):
         second = make_dedup_key("stella", "abc", "def")
         self.assertEqual(first, second)
         self.assertEqual(32, len(first))
+
+    def test_client_token_is_stable_uuid4(self):
+        first = make_client_token("same operation")
+        second = make_client_token("same operation")
+        self.assertEqual(first, second)
+        self.assertEqual(4, uuid.UUID(first).version)
 
     def test_sync_uploads_once_and_writes_attachment(self):
         with tempfile.TemporaryDirectory() as temporary:
