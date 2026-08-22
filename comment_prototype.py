@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import statistics
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -37,7 +38,46 @@ def compact_text(value: str) -> str:
 
 
 def is_reply_anchor(item: app.OcrItem) -> bool:
-    return compact_text(item.text) == "回复" and item.confidence >= 0.7
+    compact = compact_text(item.text)
+    if item.confidence < 0.7 or compact == "未回复":
+        return False
+    if compact == "回复":
+        return True
+    time_prefix = re.search(
+        r"(?:刚刚|\d+(?:秒钟|分钟|小时|天)前|昨天|前天|\d{1,2}:\d{2})",
+        compact,
+    )
+    return bool(time_prefix and compact.endswith("回复"))
+
+
+def first_complete_row_top(
+    image: Image.Image,
+    items: list[app.OcrItem],
+    anchors: list[app.OcrItem],
+    anchor_bottoms: list[int],
+    margin: int,
+) -> int | None:
+    filter_items = [
+        item
+        for item in items
+        if item.top < anchors[0].top
+        and any(
+            fragment in compact_text(item.text)
+            for fragment in ("未回复", "粉丝", "最早发布", "最新发布")
+        )
+    ]
+    if not filter_items:
+        return None
+    top = int(round(max(item.bottom for item in filter_items) + margin))
+    first_height = anchor_bottoms[0] - top
+    anchor_gaps = [
+        current - previous
+        for previous, current in zip(anchor_bottoms, anchor_bottoms[1:])
+    ]
+    minimum_height = image.height * 0.06
+    if anchor_gaps:
+        minimum_height = max(minimum_height, statistics.median(anchor_gaps) * 0.6)
+    return top if first_height >= minimum_height else None
 
 
 def is_nickname_candidate(
@@ -72,15 +112,21 @@ def detect_comment_rows(
         (item for item in items if is_reply_anchor(item)),
         key=lambda item: (item.top, item.left),
     )
-    if len(anchors) < 2:
+    if not anchors:
         return []
     margin = max(12, int(round(image.height * 0.01)))
+    anchor_bottoms = [
+        min(image.height, int(round(anchor.bottom + margin))) for anchor in anchors
+    ]
+    bounds: list[tuple[int, int]] = []
+    first_top = first_complete_row_top(
+        image, items, anchors, anchor_bottoms, margin
+    )
+    if first_top is not None:
+        bounds.append((first_top, anchor_bottoms[0]))
+    bounds.extend(zip(anchor_bottoms, anchor_bottoms[1:]))
     rows: list[CommentRow] = []
-    for index, (previous_anchor, current_anchor) in enumerate(
-        zip(anchors, anchors[1:]), start=1
-    ):
-        top = max(0, int(round(previous_anchor.bottom + margin)))
-        bottom = min(image.height, int(round(current_anchor.bottom + margin)))
+    for index, (top, bottom) in enumerate(bounds, start=1):
         if bottom <= top:
             continue
         candidates = [

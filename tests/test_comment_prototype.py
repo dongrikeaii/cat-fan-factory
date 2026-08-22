@@ -13,9 +13,32 @@ from comment_prototype import detect_comment_rows, is_reply_anchor
 class CommentPrototypeTests(unittest.TestCase):
     def test_exact_reply_text_is_anchor_but_filter_is_not(self):
         self.assertTrue(is_reply_anchor(OcrItem("回复", 0.99, 300, 100, 360, 130)))
+        self.assertTrue(
+            is_reply_anchor(
+                OcrItem("2分钟前 · 云南 回复", 0.99, 120, 100, 380, 130)
+            )
+        )
         self.assertFalse(
             is_reply_anchor(OcrItem("未回复", 0.99, 50, 20, 150, 50))
         )
+        self.assertFalse(
+            is_reply_anchor(OcrItem("请回复", 0.99, 120, 220, 250, 255))
+        )
+
+    def test_complete_first_row_after_filters_is_included(self):
+        image = Image.new("RGB", (828, 900), "white")
+        items = [
+            OcrItem("未回复", 0.99, 50, 100, 150, 130),
+            OcrItem("最新发布", 0.99, 610, 100, 760, 130),
+            OcrItem("暖暖橙橙", 0.98, 120, 175, 260, 205),
+            OcrItem("礼貌投稿", 0.99, 120, 220, 300, 255),
+            OcrItem("2分钟前 · 云南 回复", 0.99, 120, 280, 380, 310),
+            OcrItem("我又干嘛了", 0.98, 120, 370, 260, 405),
+            OcrItem("我也想要", 0.99, 120, 420, 300, 455),
+            OcrItem("2分钟前 · 辽宁 回复", 0.99, 120, 480, 380, 510),
+        ]
+        rows = detect_comment_rows(image, items, 0.72)
+        self.assertEqual(["暖暖橙橙", "我又干嘛了"], [row.nickname for row in rows])
 
     def test_adjacent_reply_anchors_support_variable_row_heights(self):
         image = Image.new("RGB", (828, 900), "white")
