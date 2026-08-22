@@ -150,7 +150,8 @@ class BatchPaths:
 
 
 class Database:
-    def __init__(self, path: Path) -> None:
+    def __init__(self, path: Path, root: Path = ROOT) -> None:
+        self.root = root
         path.parent.mkdir(parents=True, exist_ok=True)
         self.connection = sqlite3.connect(path)
         self.connection.row_factory = sqlite3.Row
@@ -166,16 +167,62 @@ class Database:
                 row_index INTEGER NOT NULL,
                 ocr_confidence REAL NOT NULL,
                 review_required INTEGER NOT NULL,
+                template_name TEXT NOT NULL DEFAULT '',
                 output_file TEXT NOT NULL,
                 created_at TEXT NOT NULL
             )
             """
         )
+        columns = {
+            row["name"]
+            for row in self.connection.execute(
+                "PRAGMA table_info(processed_entries)"
+            ).fetchall()
+        }
+        if "template_name" not in columns:
+            self.connection.execute(
+                "ALTER TABLE processed_entries "
+                "ADD COLUMN template_name TEXT NOT NULL DEFAULT ''"
+            )
+        self._migrate_template_names()
         self.connection.commit()
 
-    def find_duplicate(self, analysis: RowAnalysis) -> sqlite3.Row | None:
+    def _migrate_template_names(self) -> None:
         rows = self.connection.execute(
-            "SELECT * FROM processed_entries ORDER BY id DESC"
+            """
+            SELECT id, output_file FROM processed_entries
+            WHERE template_name = ''
+            """
+        ).fetchall()
+        for row in rows:
+            output_path = self.root / row["output_file"]
+            report_path = output_path.parent.parent / "report.json"
+            if not report_path.is_file():
+                continue
+            try:
+                template_name = str(
+                    json.loads(report_path.read_text(encoding="utf-8")).get(
+                        "template", ""
+                    )
+                ).strip()
+            except (OSError, ValueError, TypeError):
+                continue
+            if template_name:
+                self.connection.execute(
+                    "UPDATE processed_entries SET template_name = ? WHERE id = ?",
+                    (template_name, row["id"]),
+                )
+
+    def find_duplicate(
+        self, analysis: RowAnalysis, template_name: str
+    ) -> sqlite3.Row | None:
+        rows = self.connection.execute(
+            """
+            SELECT * FROM processed_entries
+            WHERE template_name = ? AND review_required = 0
+            ORDER BY id DESC
+            """,
+            (template_name,),
         ).fetchall()
         for row in rows:
             avatar_distance = hash_distance(analysis.avatar_hash, row["avatar_hash"])
@@ -196,13 +243,15 @@ class Database:
         source_file: str,
         row_index: int,
         output_file: str,
+        template_name: str,
     ) -> None:
         self.connection.execute(
             """
             INSERT INTO processed_entries (
                 nickname, normalized_name, avatar_hash, name_hash, source_file,
-                row_index, ocr_confidence, review_required, output_file, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                row_index, ocr_confidence, review_required, template_name,
+                output_file, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 analysis.nickname,
@@ -213,6 +262,7 @@ class Database:
                 row_index,
                 analysis.nickname_confidence,
                 int(analysis.needs_review),
+                template_name,
                 output_file,
                 datetime.now().isoformat(timespec="seconds"),
             ),
@@ -265,34 +315,112 @@ class OcrReader:
         return sorted(items, key=lambda item: (item.top, item.left))
 
 
+def detect_ellipsis_markers(
+    rgb: np.ndarray,
+) -> list[tuple[float, tuple[int, int]]]:
+    height, width = rgb.shape[:2]
+    gray = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
+    x_grid = np.indices(gray.shape)[1]
+    dark_right = ((gray < 100) & (x_grid >= width * 0.88)).astype(np.uint8)
+    count, _, stats, centroids = cv2.connectedComponentsWithStats(dark_right, 8)
+    max_dot_size = max(8, int(round(width * 0.016)))
+    dots: list[tuple[float, float, int, int, int]] = []
+    for label in range(1, count):
+        x, y, component_width, component_height, area = stats[label]
+        if not 2 <= component_width <= max_dot_size:
+            continue
+        if not 2 <= component_height <= max_dot_size:
+            continue
+        if not 4 <= area <= max_dot_size * max_dot_size:
+            continue
+        aspect = component_width / component_height
+        if not 0.45 <= aspect <= 2.2:
+            continue
+        dots.append(
+            (
+                float(centroids[label][0]),
+                float(centroids[label][1]),
+                int(y),
+                int(y + component_height),
+                int(area),
+            )
+        )
+
+    y_tolerance = max(2.0, min(7.0, height * 0.004))
+    groups: list[list[tuple[float, float, int, int, int]]] = []
+    for dot in sorted(dots, key=lambda item: (item[1], item[0])):
+        matching = next(
+            (
+                group
+                for group in groups
+                if abs(dot[1] - float(np.mean([item[1] for item in group])))
+                <= y_tolerance
+            ),
+            None,
+        )
+        if matching is None:
+            groups.append([dot])
+        else:
+            matching.append(dot)
+
+    markers: list[tuple[float, tuple[int, int]]] = []
+    for group in groups:
+        ordered = sorted(group, key=lambda item: item[0])
+        for start in range(len(ordered) - 2):
+            triple = ordered[start : start + 3]
+            gaps = [triple[1][0] - triple[0][0], triple[2][0] - triple[1][0]]
+            if min(gaps) < width * 0.008 or max(gaps) > width * 0.025:
+                continue
+            if max(gaps) / min(gaps) > 1.7:
+                continue
+            areas = [item[4] for item in triple]
+            if max(areas) / min(areas) > 3:
+                continue
+            center = float(np.mean([item[1] for item in triple]))
+            markers.append(
+                (center, (min(item[2] for item in triple), max(item[3] for item in triple)))
+            )
+            break
+    return sorted(markers, key=lambda item: item[0])
+
+
 def detect_rows(image: Image.Image, config: dict[str, Any]) -> list[DetectedRow]:
     options = config["row_detection"]
     rgb = np.asarray(image.convert("RGB"))
-    red = (
-        (rgb[:, :, 0] >= options["red_r_min"])
-        & (rgb[:, :, 1] <= options["red_g_max"])
-        & (rgb[:, :, 2] <= options["red_b_max"])
-        & ((rgb[:, :, 0].astype(np.int16) - rgb[:, :, 1]) >= options["red_gap_min"])
-    ).astype(np.uint8)
-    count, _, stats, centroids = cv2.connectedComponentsWithStats(red, 8)
     width, height = image.size
-    centers: list[float] = []
-    component_bounds: list[tuple[int, int]] = []
-    for label in range(1, count):
-        x, y, component_width, component_height, area = stats[label]
-        if x < width * options["min_x_ratio"]:
-            continue
-        if component_width < width * options["min_width_ratio"]:
-            continue
-        if component_height < max(20, height * options["min_height_ratio"]):
-            continue
-        if area < options["min_area"]:
-            continue
-        centers.append(float(centroids[label][1]))
-        component_bounds.append((int(y), int(y + component_height)))
+    ellipsis_markers = detect_ellipsis_markers(rgb)
+    centers = [item[0] for item in ellipsis_markers]
+    component_bounds = [item[1] for item in ellipsis_markers]
+    if not centers:
+        red = (
+            (rgb[:, :, 0] >= options["red_r_min"])
+            & (rgb[:, :, 1] <= options["red_g_max"])
+            & (rgb[:, :, 2] <= options["red_b_max"])
+            & (
+                (rgb[:, :, 0].astype(np.int16) - rgb[:, :, 1])
+                >= options["red_gap_min"]
+            )
+        ).astype(np.uint8)
+        count, _, stats, centroids = cv2.connectedComponentsWithStats(red, 8)
+        for label in range(1, count):
+            x, y, component_width, component_height, area = stats[label]
+            if x < width * options["min_x_ratio"]:
+                continue
+            if component_width < width * options["min_width_ratio"]:
+                continue
+            if component_height < max(20, height * options["min_height_ratio"]):
+                continue
+            if area < options["min_area"]:
+                continue
+            centers.append(float(centroids[label][1]))
+            component_bounds.append((int(y), int(y + component_height)))
 
     if not centers:
+        if width >= 500 and width / max(height, 1) >= 3:
+            return [DetectedRow(1, 0, height, height / 2, False)]
         return []
+    if len(centers) == 1 and width >= 500 and width / max(height, 1) >= 3:
+        return [DetectedRow(1, 0, height, height / 2, False)]
     ordering = np.argsort(centers)
     centers = [centers[index] for index in ordering]
     component_bounds = [component_bounds[index] for index in ordering]
@@ -323,6 +451,7 @@ def ignored_ocr_text(text: str) -> bool:
     ignored_fragments = (
         "关注了你",
         "回关",
+        "互相关注",
         "互动消息",
         "新关注我的",
         "分钟前",
@@ -342,7 +471,10 @@ def analyze_row(
 ) -> RowAnalysis:
     width, height = row_image.size
     follow_marker = any(
-        any(marker in item.text.replace(" ", "") for marker in ("关注了你", "回关"))
+        any(
+            marker in item.text.replace(" ", "")
+            for marker in ("关注了你", "回关", "互相关注")
+        )
         for item in items
     )
     candidates = [
@@ -370,7 +502,7 @@ def analyze_row(
     if nickname and confidence < config["ocr"]["minimum_name_confidence"]:
         reasons.append(f"昵称OCR置信度较低：{confidence:.3f}")
     if not follow_marker:
-        reasons.append("未识别到“关注了你”或“回关”标记")
+        reasons.append("未识别到“关注了你”“回关”或“互相关注”标记")
     if partial:
         reasons.append("该条目位于截图边缘，内容可能不完整")
 
@@ -625,7 +757,7 @@ def process_screenshot(
         row_image.save(crop_path, optimize=True)
         items = ocr.read(row_image)
         analysis = analyze_row(row_image, items, row.partial, config)
-        duplicate = database.find_duplicate(analysis)
+        duplicate = database.find_duplicate(analysis, template.name)
         item_report = {
             "row": row.index,
             "nickname": analysis.nickname,
@@ -658,6 +790,7 @@ def process_screenshot(
             source_file=path.name,
             row_index=row.index,
             output_file=str(output_path.relative_to(ROOT)),
+            template_name=template.name,
         )
         if analysis.needs_review:
             report["needs_review"] += 1

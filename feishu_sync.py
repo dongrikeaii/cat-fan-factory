@@ -61,6 +61,15 @@ class SyncCandidate:
             self.normalized_name,
             self.avatar_hash,
             self.name_hash,
+            self.template_name,
+        )
+
+    @property
+    def legacy_dedup_key(self) -> str:
+        return make_dedup_key(
+            self.normalized_name,
+            self.avatar_hash,
+            self.name_hash,
         )
 
     @property
@@ -129,8 +138,20 @@ def read_credentials() -> tuple[str, str]:
     return app_id, app_secret
 
 
-def make_dedup_key(normalized_name: str, avatar_hash: str, name_hash: str) -> str:
-    material = f"{normalized_name}|{avatar_hash}|{name_hash}".encode("utf-8")
+def make_dedup_key(
+    normalized_name: str,
+    avatar_hash: str,
+    name_hash: str,
+    template_name: str = "",
+) -> str:
+    if template_name:
+        material_text = (
+            f"v2|{template_name.strip().casefold()}|"
+            f"{normalized_name}|{avatar_hash}|{name_hash}"
+        )
+    else:
+        material_text = f"{normalized_name}|{avatar_hash}|{name_hash}"
+    material = material_text.encode("utf-8")
     return hashlib.sha256(material).hexdigest()[:32]
 
 
@@ -367,8 +388,8 @@ class FeishuClient:
                 raise self._error(f"创建字段“{field_name}”", response)
         return primary.field_name
 
-    def remote_dedup_keys(self) -> set[str]:
-        values: set[str] = set()
+    def remote_dedup_entries(self) -> set[tuple[str, str]]:
+        values: set[tuple[str, str]] = set()
         page_token = ""
         while True:
             builder = (
@@ -383,9 +404,11 @@ class FeishuClient:
             if not response.success():
                 raise self._error("读取远端去重记录", response)
             for item in response.data.items or []:
-                value = _plain_text((item.fields or {}).get("去重键"))
+                fields = item.fields or {}
+                value = _plain_text(fields.get("去重键"))
+                template_name = _plain_text(fields.get("模板版本"))
                 if value:
-                    values.add(value)
+                    values.add((value, template_name))
             if not response.data.has_more:
                 break
             page_token = response.data.page_token
@@ -448,11 +471,16 @@ def sync_candidates(
     state: SyncState,
 ) -> dict[str, int]:
     primary_field = client.target.primary_field or client.ensure_schema()
-    remote_keys = client.remote_dedup_keys()
+    remote_entries = client.remote_dedup_entries()
+    remote_keys = {key for key, _ in remote_entries}
     result = {"uploaded": 0, "skipped": 0, "failed": 0}
     for candidate in candidates:
         key = candidate.dedup_key
-        if key in remote_keys:
+        legacy_match = (
+            candidate.legacy_dedup_key,
+            candidate.template_name,
+        ) in remote_entries
+        if key in remote_keys or legacy_match:
             result["skipped"] += 1
             state.save(key, candidate.output_file, "remote_exists")
             continue

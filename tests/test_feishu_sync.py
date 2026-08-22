@@ -19,17 +19,17 @@ from feishu_sync import (
 
 
 class FakeFeishuClient:
-    def __init__(self, remote_keys=None):
+    def __init__(self, remote_entries=None):
         self.target = FeishuTarget("base-token", "table-id", primary_field="粉丝昵称")
-        self.remote_keys = set(remote_keys or [])
+        self.remote_entries = set(remote_entries or [])
         self.uploaded = []
         self.records = []
 
     def ensure_schema(self):
         return "粉丝昵称"
 
-    def remote_dedup_keys(self):
-        return set(self.remote_keys)
+    def remote_dedup_entries(self):
+        return set(self.remote_entries)
 
     def upload_image(self, path):
         self.uploaded.append(path)
@@ -58,6 +58,9 @@ class FeishuSyncTests(unittest.TestCase):
         second = make_dedup_key("stella", "abc", "def")
         self.assertEqual(first, second)
         self.assertEqual(32, len(first))
+        classic = make_dedup_key("stella", "abc", "def", "classic-cat")
+        orange = make_dedup_key("stella", "abc", "def", "Orange Cat")
+        self.assertNotEqual(classic, orange)
 
     def test_client_token_is_stable_uuid4(self):
         first = make_client_token("same operation")
@@ -110,7 +113,9 @@ class FeishuSyncTests(unittest.TestCase):
                 batch_name="batch",
                 template_name="classic-cat",
             )
-            client = FakeFeishuClient({candidate.dedup_key})
+            client = FakeFeishuClient(
+                {(candidate.dedup_key, candidate.template_name)}
+            )
             state = SyncState(root / "state.sqlite3")
             try:
                 result = sync_candidates(client, [candidate], state)
@@ -118,6 +123,51 @@ class FeishuSyncTests(unittest.TestCase):
                 state.close()
             self.assertEqual({"uploaded": 0, "skipped": 1, "failed": 0}, result)
             self.assertEqual([], client.uploaded)
+
+    def test_legacy_key_only_skips_the_same_template(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            image = root / "fan.jpg"
+            image.write_bytes(b"jpeg")
+            classic = SyncCandidate(
+                nickname="Stella",
+                normalized_name="stella",
+                avatar_hash="a" * 16,
+                name_hash="b" * 16,
+                output_path=image,
+                output_file="output/classic.jpg",
+                created_at="2026-08-21T22:00:00",
+                batch_name="classic-batch",
+                template_name="classic-cat",
+            )
+            orange = SyncCandidate(
+                **{
+                    **classic.__dict__,
+                    "output_file": "output/orange.jpg",
+                    "batch_name": "orange-batch",
+                    "template_name": "Orange Cat",
+                }
+            )
+            remote = {(classic.legacy_dedup_key, "classic-cat")}
+            classic_client = FakeFeishuClient(remote)
+            classic_state = SyncState(root / "classic.sqlite3")
+            try:
+                classic_result = sync_candidates(
+                    classic_client, [classic], classic_state
+                )
+            finally:
+                classic_state.close()
+            self.assertEqual(1, classic_result["skipped"])
+
+            orange_client = FakeFeishuClient(remote)
+            orange_state = SyncState(root / "orange.sqlite3")
+            try:
+                orange_result = sync_candidates(
+                    orange_client, [orange], orange_state
+                )
+            finally:
+                orange_state.close()
+            self.assertEqual(1, orange_result["uploaded"])
 
 
 if __name__ == "__main__":
