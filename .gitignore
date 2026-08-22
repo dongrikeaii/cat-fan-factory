@@ -14,6 +14,11 @@ needs_review/
 output/*
 data/*
 
+# Optional source photos are converted to cat_base.png by the template wizard.
+templates/*/cat_base.jpg
+templates/*/cat_base.jpeg
+templates/*/cat_base.webp
+
 !inbox/.gitkeep
 !comment_inbox/.gitkeep
 !output/.gitkeep

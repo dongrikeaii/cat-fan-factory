@@ -612,6 +612,102 @@ def template_directories(config: dict[str, Any]) -> dict[str, Path]:
     }
 
 
+def template_base_sources(directory: Path) -> list[Path]:
+    return [
+        path
+        for path in sorted(directory.iterdir(), key=lambda item: item.name.casefold())
+        if path.is_file()
+        and path.stem.casefold() == "cat_base"
+        and path.suffix.casefold() in {".jpg", ".jpeg", ".webp"}
+    ]
+
+
+def ensure_template_base_png(directory: Path) -> tuple[Path, str]:
+    destination = directory / "cat_base.png"
+    if destination.is_file():
+        return destination, "使用现有 cat_base.png"
+    sources = template_base_sources(directory)
+    if not sources:
+        raise FileNotFoundError(
+            f"{directory.name} 缺少 cat_base.png，也没有可转换的 "
+            "cat_base.jpg/jpeg/webp。"
+        )
+    if len(sources) > 1:
+        names = "、".join(path.name for path in sources)
+        raise ValueError(f"{directory.name} 有多个底图候选，请只保留一个：{names}")
+    source = sources[0]
+    with Image.open(source) as opened:
+        converted = ImageOps.exif_transpose(opened).convert("RGB")
+        converted.save(destination, optimize=True)
+    return destination, f"已将 {source.name} 按照片方向转为 cat_base.png"
+
+
+def template_setup_status(directory: Path) -> str:
+    has_base = (directory / "cat_base.png").is_file()
+    sources = template_base_sources(directory)
+    has_paw = (directory / "paw_foreground.png").is_file()
+    if has_base and has_paw:
+        return "可生成"
+    if not has_base and len(sources) == 1 and has_paw:
+        return f"可自动转换 {sources[0].name}"
+    missing: list[str] = []
+    if not has_base and not sources:
+        missing.append("底图")
+    if not has_paw:
+        missing.append("paw_foreground.png")
+    if len(sources) > 1:
+        missing.append("底图候选过多")
+    return "需要处理：" + "、".join(missing)
+
+
+def template_wizard(config: dict[str, Any]) -> list[dict[str, Any]]:
+    root = project_path(config["paths"]["templates"])
+    directories = [
+        path
+        for path in sorted(root.iterdir(), key=lambda item: item.name.casefold())
+        if path.is_dir()
+    ]
+    if not directories:
+        raise FileNotFoundError("templates 中没有模板文件夹。")
+    print("模板蒙版生成向导：")
+    for index, directory in enumerate(directories, start=1):
+        print(f"  {index}. {directory.name}（{template_setup_status(directory)}）")
+    choice = input("请输入模板序号，输入 A 处理全部，直接回车取消：").strip()
+    if not choice:
+        print("已取消，没有修改模板。")
+        return []
+    if choice.casefold() == "a":
+        selected = directories
+    elif choice.isdigit() and 1 <= int(choice) <= len(directories):
+        selected = [directories[int(choice) - 1]]
+    else:
+        raise ValueError("请输入列表中的模板序号或 A。")
+
+    results: list[dict[str, Any]] = []
+    failures: list[str] = []
+    for directory in selected:
+        try:
+            _, conversion = ensure_template_base_png(directory)
+            bundle = load_template_bundle(config, directory.name, directory)
+            result = prepare_template_mask(bundle)
+        except (FileNotFoundError, OSError, ValueError) as exc:
+            failures.append(f"{directory.name}：{exc}")
+            print(f"失败：{directory.name}；{exc}")
+            continue
+        result["base"] = conversion
+        results.append(result)
+        print(
+            f"成功：{directory.name}，尺寸 {result['size'][0]}x{result['size'][1]}，"
+            f"蒙版 {result['mask']}"
+        )
+    if not results:
+        raise ValueError("没有模板成功生成蒙版。" + "；".join(failures))
+    if failures:
+        print("其余模板未处理成功，不影响以上成功模板。")
+    print("完成后可双击 03_切换模板.bat 选择新模板。")
+    return results
+
+
 def load_template_bundle(
     config: dict[str, Any], name: str, directory: Path
 ) -> TemplateBundle:
@@ -1200,6 +1296,7 @@ def build_parser() -> argparse.ArgumentParser:
     setup = subparsers.add_parser("setup-template", help="兼容旧版：生成模板蒙版")
     setup.add_argument("--force", action="store_true", help=argparse.SUPPRESS)
     subparsers.add_parser("choose-template", help="交互选择当前模板")
+    subparsers.add_parser("template-wizard", help="交互检查素材并生成模板蒙版")
     select = subparsers.add_parser("set-template", help="按名称切换模板")
     select.add_argument("name", help="templates 下的文件夹名称")
     subparsers.add_parser("list-templates", help="列出模板与当前选择")
@@ -1248,6 +1345,8 @@ def main() -> int:
             prepare_templates(config)
         elif arguments.command == "choose-template":
             choose_template(config)
+        elif arguments.command == "template-wizard":
+            template_wizard(config)
         elif arguments.command == "set-template":
             set_active_template(config, arguments.name)
         elif arguments.command == "list-templates":

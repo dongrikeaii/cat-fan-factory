@@ -4,7 +4,7 @@
 
 ```text
 templates/版本名/
-├─ cat_base.png
+├─ cat_base.png       # 或放 cat_base.jpg/jpeg/webp，04 会自动转换
 ├─ paw_foreground.png
 ├─ paw_mask_debug.png   # 由程序生成，不需要手工制作
 └─ template.json        # 可选，调整卡片位置与角度
@@ -12,16 +12,17 @@ templates/版本名/
 
 要求：
 
-- `cat_base.png` 与 `paw_foreground.png` 的像素尺寸必须完全一致。
+- `cat_base.png` 与 `paw_foreground.png` 的像素尺寸必须完全一致。如果只有 JPG，请命名为 `cat_base.jpg`，程序会校正手机拍照方向并生成 PNG。
 - `paw_foreground.png` 必须是带透明通道的 RGBA PNG。
 - 透明区域表示卡片可以显示；不透明猫爪会盖在卡片上。
 
 添加新版本：
 
-1. 复制 `classic-cat` 文件夹并改成新名字。
-2. 替换其中的 `cat_base.png` 和 `paw_foreground.png`。
-3. 双击根目录的 `04_生成模板蒙版.bat`。
-4. 双击 `03_切换模板.bat`，输入模板序号。
+1. 在 `templates` 里新建一个空文件夹，文件夹名就是模板名。
+2. 放入 `cat_base.png` 或 `cat_base.jpg`，再放入 `paw_foreground.png`。
+3. 双击根目录的 `04_生成模板蒙版.bat`，输入该模板的序号；输入 `A` 可检查全部。
+4. 程序会自动转换 JPG、检查尺寸与透明通道，并生成 `paw_mask_debug.png`。失败时会直接说明缺少哪个文件或哪项不符合。
+5. 打开 `paw_mask_debug.png` 检查覆盖区域，再双击 `03_切换模板.bat` 切换。
 
 `template.json` 可以覆盖全局默认参数：
 

@@ -108,20 +108,20 @@ output/batches/2026-08-22_20-50-49/
 
 ```text
 templates/my-cat-v2/
-├─ cat_base.png
+├─ cat_base.png       或 cat_base.jpg/jpeg/webp
 ├─ paw_foreground.png
 ├─ paw_mask_debug.png   自动生成
 └─ template.json        可选
 ```
 
-仓库内置 `classic-cat` 和 `Orange Cat` 两个示例模板，可双击 `03_切换模板.bat` 切换。
+仓库内置 `classic-cat`、`Orange Cat` 和 `Bite` 三个模板，可双击 `03_切换模板.bat` 切换。`Bite` 的嘴部前景会盖住粉丝卡片或评论卡片的上沿。
 
 操作步骤：
 
 1. 新建 `templates/版本名` 文件夹。
-2. 放入尺寸完全相同的 `cat_base.png` 和 `paw_foreground.png`。
+2. 放入 `cat_base.png` 或命名为 `cat_base.jpg/jpeg/webp` 的底图，再放入 `paw_foreground.png`。
 3. `paw_foreground.png` 必须有透明背景。
-4. 双击 `04_生成模板蒙版.bat`。
+4. 双击 `04_生成模板蒙版.bat`，输入模板序号；输入 `A` 可检查全部模板。程序会自动校正手机 JPG 的方向、生成 `cat_base.png`，并明确提示缺少的文件或尺寸问题。
 5. 检查生成的黑白 `paw_mask_debug.png`。
 6. 双击 `03_切换模板.bat`，输入模板序号。
 7. 双击 `05_查看状态.bat` 确认当前模板。
@@ -166,7 +166,7 @@ templates/my-cat-v2/
 | `01_处理一次.bat` | 自动处理 inbox 中的关注和评论截图，生成时间批次 |
 | `02_持续监听.bat` | 持续监听 `inbox` |
 | `03_切换模板.bat` | 交互选择当前模板版本 |
-| `04_生成模板蒙版.bat` | 为所有完整模板重新生成Alpha蒙版 |
+| `04_生成模板蒙版.bat` | 交互选择单个/全部模板，自动转换 JPG、检查素材并生成 Alpha 蒙版 |
 | `05_查看状态.bat` | 查看模板、批次和去重统计 |
 | `06_配置飞书.bat` | 保存目标表格、检查权限并补齐字段 |
 | `07_同步飞书.bat` | 上传正式成品并执行跨电脑远端去重 |
@@ -177,6 +177,7 @@ templates/my-cat-v2/
 
 ```powershell
 .\.venv\Scripts\python.exe app.py prepare-templates
+.\.venv\Scripts\python.exe app.py template-wizard
 .\.venv\Scripts\python.exe app.py list-templates
 .\.venv\Scripts\python.exe app.py set-template classic-cat
 .\.venv\Scripts\python.exe app.py process

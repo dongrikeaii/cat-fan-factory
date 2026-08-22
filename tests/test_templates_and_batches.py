@@ -111,6 +111,46 @@ class TemplateAndBatchTests(unittest.TestCase):
                     app.set_active_template(config, "two")
                 self.assertEqual("two", app.active_template_name(config))
 
+    def test_template_base_jpg_is_auto_rotated_and_converted(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary) / "templates" / "phone-photo"
+            directory.mkdir(parents=True)
+            photo = Image.new("RGB", (30, 20), "orange")
+            exif = Image.Exif()
+            exif[274] = 6
+            photo.save(directory / "cat_base.jpg", exif=exif)
+            Image.new("RGBA", (20, 30), (255, 255, 255, 255)).save(
+                directory / "paw_foreground.png"
+            )
+
+            converted, message = app.ensure_template_base_png(directory)
+
+            self.assertEqual(directory / "cat_base.png", converted)
+            self.assertIn("cat_base.jpg", message)
+            with Image.open(converted) as result:
+                self.assertEqual((20, 30), result.size)
+
+    def test_template_wizard_processes_selected_convertible_template(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            directory = root / "templates" / "new-bite"
+            directory.mkdir(parents=True)
+            Image.new("RGB", (20, 30), "gray").save(directory / "cat_base.jpg")
+            Image.new("RGBA", (20, 30), (255, 255, 255, 127)).save(
+                directory / "paw_foreground.png"
+            )
+            config = make_config()
+
+            with patch.object(app, "ROOT", root):
+                with patch("builtins.input", return_value="1"):
+                    with redirect_stdout(io.StringIO()) as captured:
+                        results = app.template_wizard(config)
+
+            self.assertEqual("new-bite", results[0]["template"])
+            self.assertTrue((directory / "cat_base.png").is_file())
+            self.assertTrue((directory / "paw_mask_debug.png").is_file())
+            self.assertIn("可自动转换", captured.getvalue())
+
     def test_each_processing_run_gets_a_unique_timestamp_folder(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
