@@ -9,11 +9,13 @@ __pycache__/
 archive/
 assets/
 inbox/*
+comment_inbox/*
 needs_review/
 output/*
 data/*
 
 !inbox/.gitkeep
+!comment_inbox/.gitkeep
 !output/.gitkeep
 !data/.gitkeep
 

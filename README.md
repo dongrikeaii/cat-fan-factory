@@ -77,6 +77,27 @@ output/batches/2026-08-21_21-30-15/
 
 持续监听模式：双击 `02_持续监听.bat`，保持黑色窗口打开。新截图放入 `inbox` 后会自动处理；按 `Ctrl+C` 停止。
 
+### 评论区截图测试（实验功能）
+
+评论管理界面也可以先在本地自动切图和生成成品：
+
+1. 截图时保留每条评论下方完整的“回复”二字。建议第一条、最后一条之外再多截一条，给程序提供上下边界。
+2. 把评论截图放入 `comment_inbox`，不要放进普通的 `inbox`。
+3. 双击 `09_评论区截图测试.bat`。
+4. 打开 `output/comment_batches` 中最新的时间文件夹。
+
+程序只把OCR精确识别为“回复”的文字当作锚点，不会把顶部筛选项“未回复”误认为评论边界。每两个相邻“回复”锚点之间是一条完整评论，因此评论是一行还是多行、卡片高度是否一致都不影响切割。截图顶部第一条和底部最后一条如果缺少另一侧锚点会被跳过；纯表情昵称或昵称识别置信度低的结果会进入 `needs_review`。
+
+```text
+output/comment_batches/2026-08-22_19-45-00/
+├─ final/          昵称识别可靠的评论成品
+├─ cropped_rows/   自动切出的原始评论框
+├─ needs_review/   纯表情或低置信度昵称成品
+└─ report.json     锚点、边界、昵称和复核原因
+```
+
+该入口目前只负责本地识别、切图和合成，不连接抖音，也不会回复、上传或发布图片。评论截图不要与普通关注截图混放；评论成品也不会被 `07` 或 `08` 上传到飞书。
+
 ## 三、增加新模板
 
 每个模板都是 `templates` 下的一个文件夹：
@@ -146,6 +167,7 @@ templates/my-cat-v2/
 | `06_配置飞书.bat` | 保存目标表格、检查权限并补齐字段 |
 | `07_同步飞书.bat` | 上传正式成品并执行跨电脑远端去重 |
 | `08_批量处理并上传飞书.bat` | 处理 inbox 全部截图，确认后只上传本次新批次 |
+| `09_评论区截图测试.bat` | 处理 comment_inbox 评论截图，仅生成本地实验成品 |
 
 ## 六、命令行与开发验证
 
@@ -161,6 +183,7 @@ templates/my-cat-v2/
 .\.venv\Scripts\python.exe app.py sync-feishu --latest-batches 2 --dry-run
 .\.venv\Scripts\python.exe app.py sync-feishu --latest-batches 2
 .\.venv\Scripts\python.exe app.py process-and-sync
+.\.venv\Scripts\python.exe comment_prototype.py --input "C:\path\comment.png" --template "Orange Cat"
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
 
@@ -169,6 +192,7 @@ templates/my-cat-v2/
 - 不要把真实关注截图、头像、昵称、OCR数据库或生成成品提交到GitHub。
 - 提交前检查 `git status --short --ignored`。
 - 本工具只处理用户主动放入 `inbox` 的本地截图，不自动登录、抓取或控制社交平台。
+- 评论区实验入口只处理用户主动放入 `comment_inbox` 的截图；不使用逆向接口、模拟点击或自动发布。
 - 飞书同步必须由用户主动运行，不会后台自动上传；待复核图片不会自动上传。
 - 如果公开发布带有粉丝头像和昵称的成品，请自行确认隐私和平台规则。
 
