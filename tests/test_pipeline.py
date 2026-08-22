@@ -4,21 +4,26 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import numpy as np
 from PIL import Image, ImageDraw
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+import app
 from app import (
+    BatchPaths,
     Database,
     OcrItem,
     RowAnalysis,
+    TemplateBundle,
     analyze_row,
     detect_rows,
     hash_distance,
     image_dhash,
     normalize_name,
+    process_screenshot,
 )
 
 
@@ -156,6 +161,50 @@ class PipelineTests(unittest.TestCase):
             finally:
                 database.connection.close()
 
+    def test_comment_dedup_uses_content_and_stays_separate_from_followers(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            database = Database(root / "data" / "processed.sqlite3", root)
+            first = RowAnalysis(
+                nickname="Stella",
+                normalized_name="stella",
+                nickname_confidence=0.99,
+                follow_marker_found=True,
+                ocr_text=["第一条评论"],
+                avatar_hash="0" * 16,
+                name_hash="1" * 16,
+                needs_review=False,
+                review_reasons=[],
+                content_key="first-comment",
+            )
+            second = RowAnalysis(
+                **{
+                    **first.__dict__,
+                    "ocr_text": ["第二条评论"],
+                    "content_key": "second-comment",
+                }
+            )
+            try:
+                database.insert(
+                    first,
+                    "comments.png",
+                    1,
+                    "output/batches/one/final/first.jpg",
+                    "Orange Cat",
+                    "comment",
+                )
+                self.assertIsNotNone(
+                    database.find_duplicate(first, "Orange Cat", "comment")
+                )
+                self.assertIsNone(
+                    database.find_duplicate(second, "Orange Cat", "comment")
+                )
+                self.assertIsNone(
+                    database.find_duplicate(first, "Orange Cat", "follower")
+                )
+            finally:
+                database.connection.close()
+
     def test_dhash_is_stable_for_small_brightness_change(self):
         gradient = np.tile(np.arange(96, dtype=np.uint8), (96, 1))
         first = Image.fromarray(gradient, mode="L")
@@ -165,6 +214,99 @@ class PipelineTests(unittest.TestCase):
     def test_normalize_name_ignores_case_width_and_spaces(self):
         self.assertEqual(normalize_name(" Sixteen Ghost "), "sixteenghost")
         self.assertEqual(normalize_name("Ｓｔｅｌｌａ"), "stella")
+
+    def test_main_pipeline_auto_detects_and_processes_comments(self):
+        full_items = [
+            OcrItem("评论管理", 0.99, 340, 20, 480, 60),
+            OcrItem("未回复", 0.99, 50, 100, 150, 130),
+            OcrItem("粉丝", 0.99, 360, 100, 450, 130),
+            OcrItem("最新发布", 0.99, 610, 100, 760, 130),
+            OcrItem("暖暖橙橙", 0.98, 120, 175, 260, 205),
+            OcrItem("礼貌投稿", 0.99, 120, 220, 300, 255),
+            OcrItem("2分钟前 · 云南 回复", 0.99, 120, 280, 380, 310),
+            OcrItem("我又干嘛了", 0.98, 120, 370, 260, 405),
+            OcrItem("我也想要", 0.99, 120, 420, 300, 455),
+            OcrItem("2分钟前 · 辽宁 回复", 0.99, 120, 480, 380, 510),
+        ]
+        row_items = [
+            [
+                OcrItem("暖暖橙橙", 0.98, 120, 20, 260, 50),
+                OcrItem("礼貌投稿", 0.99, 120, 70, 300, 105),
+                OcrItem("2分钟前 · 云南 回复", 0.99, 120, 130, 380, 160),
+            ],
+            [
+                OcrItem("我又干嘛了", 0.98, 120, 20, 260, 50),
+                OcrItem("我也想要", 0.99, 120, 70, 300, 105),
+                OcrItem("2分钟前 · 辽宁 回复", 0.99, 120, 130, 380, 160),
+            ],
+        ]
+
+        class FakeOcr:
+            def __init__(self):
+                self.calls = 0
+
+            def read(self, _image):
+                self.calls += 1
+                return full_items if self.calls == 1 else row_items[self.calls - 2]
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "inbox" / "comments.png"
+            source.parent.mkdir()
+            Image.new("RGB", (828, 900), "white").save(source)
+            batch_root = root / "output" / "batches" / "batch"
+            batch = BatchPaths(
+                root=batch_root,
+                final=batch_root / "final",
+                crops=batch_root / "cropped_rows",
+                review=batch_root / "needs_review",
+                sources=batch_root / "source_screenshots",
+            )
+            for directory in (
+                batch.final,
+                batch.crops,
+                batch.review,
+                batch.sources,
+            ):
+                directory.mkdir(parents=True)
+            template_dir = root / "templates" / "Orange Cat"
+            template_dir.mkdir(parents=True)
+            template = TemplateBundle(
+                "Orange Cat",
+                template_dir,
+                template_dir / "cat_base.png",
+                template_dir / "paw_foreground.png",
+                template_dir / "paw_mask_debug.png",
+                {},
+            )
+            database = Database(root / "data" / "processed.sqlite3", root)
+            try:
+                with patch.object(app, "ROOT", root):
+                    with patch.object(
+                        app,
+                        "compose_card",
+                        return_value=Image.new("RGB", (20, 30), "white"),
+                    ):
+                        report = process_screenshot(
+                            source,
+                            self.config,
+                            database,
+                            FakeOcr(),
+                            template,
+                            batch,
+                        )
+                self.assertEqual("comment", report["entry_type"])
+                self.assertEqual(2, report["generated"])
+                self.assertEqual(
+                    ["暖暖橙橙", "我又干嘛了"],
+                    [item["nickname"] for item in report["items"]],
+                )
+                entry_types = database.connection.execute(
+                    "SELECT DISTINCT entry_type FROM processed_entries"
+                ).fetchall()
+                self.assertEqual(["comment"], [row[0] for row in entry_types])
+            finally:
+                database.connection.close()
 
 
 if __name__ == "__main__":

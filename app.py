@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import json
 import re
 import shutil
@@ -128,6 +129,7 @@ class RowAnalysis:
     name_hash: str
     needs_review: bool
     review_reasons: list[str]
+    content_key: str = ""
 
 
 @dataclass(frozen=True)
@@ -168,6 +170,8 @@ class Database:
                 ocr_confidence REAL NOT NULL,
                 review_required INTEGER NOT NULL,
                 template_name TEXT NOT NULL DEFAULT '',
+                entry_type TEXT NOT NULL DEFAULT 'follower',
+                content_key TEXT NOT NULL DEFAULT '',
                 output_file TEXT NOT NULL,
                 created_at TEXT NOT NULL
             )
@@ -183,6 +187,16 @@ class Database:
             self.connection.execute(
                 "ALTER TABLE processed_entries "
                 "ADD COLUMN template_name TEXT NOT NULL DEFAULT ''"
+            )
+        if "entry_type" not in columns:
+            self.connection.execute(
+                "ALTER TABLE processed_entries "
+                "ADD COLUMN entry_type TEXT NOT NULL DEFAULT 'follower'"
+            )
+        if "content_key" not in columns:
+            self.connection.execute(
+                "ALTER TABLE processed_entries "
+                "ADD COLUMN content_key TEXT NOT NULL DEFAULT ''"
             )
         self._migrate_template_names()
         self.connection.commit()
@@ -214,15 +228,18 @@ class Database:
                 )
 
     def find_duplicate(
-        self, analysis: RowAnalysis, template_name: str
+        self,
+        analysis: RowAnalysis,
+        template_name: str,
+        entry_type: str = "follower",
     ) -> sqlite3.Row | None:
         rows = self.connection.execute(
             """
             SELECT * FROM processed_entries
-            WHERE template_name = ? AND review_required = 0
+            WHERE template_name = ? AND entry_type = ? AND review_required = 0
             ORDER BY id DESC
             """,
-            (template_name,),
+            (template_name, entry_type),
         ).fetchall()
         for row in rows:
             avatar_distance = hash_distance(analysis.avatar_hash, row["avatar_hash"])
@@ -231,6 +248,14 @@ class Database:
                 analysis.normalized_name
                 and analysis.normalized_name == row["normalized_name"]
             )
+            if entry_type == "comment":
+                same_content = bool(
+                    analysis.content_key
+                    and analysis.content_key == row["content_key"]
+                )
+                if same_content and same_name and avatar_distance <= 12:
+                    return row
+                continue
             if same_name and avatar_distance <= 12:
                 return row
             if avatar_distance <= 5 and name_distance <= 6:
@@ -244,14 +269,15 @@ class Database:
         row_index: int,
         output_file: str,
         template_name: str,
+        entry_type: str = "follower",
     ) -> None:
         self.connection.execute(
             """
             INSERT INTO processed_entries (
                 nickname, normalized_name, avatar_hash, name_hash, source_file,
                 row_index, ocr_confidence, review_required, template_name,
-                output_file, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                entry_type, content_key, output_file, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 analysis.nickname,
@@ -263,6 +289,8 @@ class Database:
                 analysis.nickname_confidence,
                 int(analysis.needs_review),
                 template_name,
+                entry_type,
+                analysis.content_key,
                 output_file,
                 datetime.now().isoformat(timespec="seconds"),
             ),
@@ -519,6 +547,59 @@ def analyze_row(
     )
 
 
+def analyze_comment_row(
+    row_image: Image.Image,
+    items: list[OcrItem],
+    detected: Any,
+) -> RowAnalysis:
+    from comment_prototype import compact_text, is_reply_anchor
+
+    width, height = row_image.size
+    avatar = row_image.crop(
+        (
+            int(width * 0.025),
+            int(width * 0.025),
+            int(width * 0.15),
+            min(height, int(width * 0.17)),
+        )
+    )
+    name_region = row_image.crop(
+        (int(width * 0.14), 0, int(width * 0.72), min(height, int(width * 0.18)))
+    )
+    nickname_compact = compact_text(detected.nickname)
+    content_parts: list[str] = []
+    for item in sorted(items, key=lambda value: (value.top, value.left)):
+        compact = compact_text(item.text)
+        if not compact or compact == nickname_compact or is_reply_anchor(item):
+            continue
+        if item.left >= width * 0.8:
+            continue
+        if re.search(
+            r"(?:刚刚|\d+(?:秒钟|分钟|小时|天)前|昨天|前天|\d{1,2}:\d{2})",
+            compact,
+        ):
+            continue
+        content_parts.append(compact)
+    content_material = "|".join(content_parts)
+    if content_material:
+        content_key = hashlib.sha256(content_material.encode("utf-8")).hexdigest()[:32]
+    else:
+        content_key = f"image:{image_dhash(row_image)}"
+    reasons = list(detected.review_reasons)
+    return RowAnalysis(
+        nickname=detected.nickname,
+        normalized_name=normalize_name(detected.nickname),
+        nickname_confidence=detected.nickname_confidence,
+        follow_marker_found=True,
+        ocr_text=[item.text for item in items],
+        avatar_hash=image_dhash(avatar),
+        name_hash=image_dhash(name_region),
+        needs_review=bool(reasons),
+        review_reasons=reasons,
+        content_key=content_key,
+    )
+
+
 def template_directories(config: dict[str, Any]) -> dict[str, Path]:
     root = project_path(config["paths"]["templates"])
     root.mkdir(parents=True, exist_ok=True)
@@ -711,9 +792,11 @@ def save_review_metadata(
     source: Path,
     row: DetectedRow,
     analysis: RowAnalysis,
+    entry_type: str = "follower",
 ) -> None:
     payload = {
         "source": source.name,
+        "entry_type": entry_type,
         "row_index": row.index,
         "nickname": analysis.nickname,
         "ocr_confidence": round(analysis.nickname_confidence, 4),
@@ -735,9 +818,22 @@ def process_screenshot(
 ) -> dict[str, Any]:
     image = Image.open(path).convert("RGB")
     rows = detect_rows(image, config)
+    entry_type = "follower"
+    if not rows:
+        from comment_prototype import detect_comment_rows, is_comment_screenshot
+
+        full_items = ocr.read(image)
+        if is_comment_screenshot(full_items):
+            rows = detect_comment_rows(
+                image,
+                full_items,
+                float(config["ocr"]["minimum_name_confidence"]),
+            )
+            entry_type = "comment"
     report: dict[str, Any] = {
         "source": path.name,
         "template": template.name,
+        "entry_type": entry_type,
         "detected": len(rows),
         "generated": 0,
         "duplicates": 0,
@@ -747,7 +843,10 @@ def process_screenshot(
     if not rows:
         destination = unique_path(batch.sources / path.name)
         shutil.move(str(path), destination)
-        report["error"] = "没有检测到关注条目，原图已保存在本批次的 source_screenshots。"
+        report["error"] = (
+            "没有检测到关注或评论条目，原图已保存在本批次的 "
+            "source_screenshots。"
+        )
         return report
 
     for row in rows:
@@ -756,10 +855,14 @@ def process_screenshot(
         crop_path = batch.crops / crop_name
         row_image.save(crop_path, optimize=True)
         items = ocr.read(row_image)
-        analysis = analyze_row(row_image, items, row.partial, config)
-        duplicate = database.find_duplicate(analysis, template.name)
+        if entry_type == "comment":
+            analysis = analyze_comment_row(row_image, items, row)
+        else:
+            analysis = analyze_row(row_image, items, row.partial, config)
+        duplicate = database.find_duplicate(analysis, template.name, entry_type)
         item_report = {
             "row": row.index,
+            "entry_type": entry_type,
             "nickname": analysis.nickname,
             "ocr_confidence": round(analysis.nickname_confidence, 4),
             "duplicate": bool(duplicate),
@@ -791,10 +894,11 @@ def process_screenshot(
             row_index=row.index,
             output_file=str(output_path.relative_to(ROOT)),
             template_name=template.name,
+            entry_type=entry_type,
         )
         if analysis.needs_review:
             report["needs_review"] += 1
-            save_review_metadata(output_path, path, row, analysis)
+            save_review_metadata(output_path, path, row, analysis, entry_type)
         else:
             report["generated"] += 1
         item_report["output"] = str(output_path.relative_to(ROOT))
@@ -903,6 +1007,16 @@ def show_status(config: dict[str, Any]) -> None:
     ensure_directories(config)
     database = Database(project_path(config["paths"]["database"]))
     total, review = database.counts()
+    entry_counts = {
+        row["entry_type"]: row["count"]
+        for row in database.connection.execute(
+            """
+            SELECT entry_type, COUNT(*) AS count
+            FROM processed_entries
+            GROUP BY entry_type
+            """
+        ).fetchall()
+    }
     batches = project_path(config["paths"]["output_batches"])
     final_count = len(list(batches.glob("*/final/*.jpg")))
     review_count = len(list(batches.glob("*/needs_review/*.jpg")))
@@ -916,7 +1030,9 @@ def show_status(config: dict[str, Any]) -> None:
         "当前模板": active_template_name(config),
         "可用模板": list(template_directories(config)),
         "待处理截图": len(list(inbox_images(config))),
-        "已记录关注条目": total,
+        "已记录条目": total,
+        "其中关注条目": entry_counts.get("follower", 0),
+        "其中评论条目": entry_counts.get("comment", 0),
         "其中待复核": review,
         "正式成品": final_count,
         "待复核成品": review_count,

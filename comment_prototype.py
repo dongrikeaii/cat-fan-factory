@@ -50,6 +50,18 @@ def is_reply_anchor(item: app.OcrItem) -> bool:
     return bool(time_prefix and compact.endswith("回复"))
 
 
+def is_comment_screenshot(items: list[app.OcrItem]) -> bool:
+    texts = [compact_text(item.text) for item in items]
+    has_anchor = any(is_reply_anchor(item) for item in items)
+    has_comment_header = any("评论管理" in text for text in texts)
+    has_filter_bar = any("未回复" in text for text in texts) and any(
+        fragment in text
+        for text in texts
+        for fragment in ("粉丝", "最早发布", "最新发布")
+    )
+    return has_anchor and (has_comment_header or has_filter_bar)
+
+
 def first_complete_row_top(
     image: Image.Image,
     items: list[app.OcrItem],

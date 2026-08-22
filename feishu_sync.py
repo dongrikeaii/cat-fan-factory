@@ -54,6 +54,8 @@ class SyncCandidate:
     created_at: str
     batch_name: str
     template_name: str
+    entry_type: str = "follower"
+    content_key: str = ""
 
     @property
     def dedup_key(self) -> str:
@@ -62,10 +64,14 @@ class SyncCandidate:
             self.avatar_hash,
             self.name_hash,
             self.template_name,
+            self.entry_type,
+            self.content_key,
         )
 
     @property
     def legacy_dedup_key(self) -> str:
+        if self.entry_type != "follower":
+            return ""
         return make_dedup_key(
             self.normalized_name,
             self.avatar_hash,
@@ -143,8 +149,15 @@ def make_dedup_key(
     avatar_hash: str,
     name_hash: str,
     template_name: str = "",
+    entry_type: str = "follower",
+    content_key: str = "",
 ) -> str:
-    if template_name:
+    if entry_type == "comment":
+        material_text = (
+            f"v3|comment|{template_name.strip().casefold()}|"
+            f"{normalized_name}|{avatar_hash}|{content_key}"
+        )
+    elif template_name:
         material_text = (
             f"v2|{template_name.strip().casefold()}|"
             f"{normalized_name}|{avatar_hash}|{name_hash}"
@@ -182,10 +195,23 @@ def collect_candidates(root: Path, database_path: Path) -> list[SyncCandidate]:
     connection = sqlite3.connect(database_path)
     connection.row_factory = sqlite3.Row
     try:
+        columns = {
+            row["name"]
+            for row in connection.execute(
+                "PRAGMA table_info(processed_entries)"
+            ).fetchall()
+        }
+        entry_type_column = (
+            "entry_type" if "entry_type" in columns else "'follower' AS entry_type"
+        )
+        content_key_column = (
+            "content_key" if "content_key" in columns else "'' AS content_key"
+        )
         rows = connection.execute(
-            """
+            f"""
             SELECT nickname, normalized_name, avatar_hash, name_hash,
-                   output_file, created_at
+                   output_file, created_at, {entry_type_column},
+                   {content_key_column}
             FROM processed_entries
             WHERE review_required = 0
             ORDER BY id
@@ -210,6 +236,8 @@ def collect_candidates(root: Path, database_path: Path) -> list[SyncCandidate]:
                 created_at=row["created_at"],
                 batch_name=batch_name,
                 template_name=template_name,
+                entry_type=row["entry_type"],
+                content_key=row["content_key"],
             )
         )
     return candidates
@@ -476,7 +504,7 @@ def sync_candidates(
     result = {"uploaded": 0, "skipped": 0, "failed": 0}
     for candidate in candidates:
         key = candidate.dedup_key
-        legacy_match = (
+        legacy_match = candidate.entry_type == "follower" and (
             candidate.legacy_dedup_key,
             candidate.template_name,
         ) in remote_entries
