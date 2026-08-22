@@ -8,7 +8,14 @@ from PIL import Image, ImageDraw
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from app import detect_rows, hash_distance, image_dhash, normalize_name
+from app import (
+    OcrItem,
+    analyze_row,
+    detect_rows,
+    hash_distance,
+    image_dhash,
+    normalize_name,
+)
 
 
 class PipelineTests(unittest.TestCase):
@@ -31,6 +38,18 @@ class PipelineTests(unittest.TestCase):
         rows = detect_rows(image, self.config)
         self.assertEqual(10, len(rows))
         self.assertTrue(rows[-1].partial)
+
+    def test_follower_list_uses_top_line_as_nickname(self):
+        row = Image.new("RGB", (828, 160), "white")
+        items = [
+            OcrItem("Mik.", 0.99, 168, 40, 215, 67),
+            OcrItem("回关", 1.0, 626, 68, 680, 96),
+            OcrItem("After all, tomorrow is...", 0.96, 165, 84, 480, 114),
+        ]
+        analysis = analyze_row(row, items, False, self.config)
+        self.assertEqual("Mik.", analysis.nickname)
+        self.assertTrue(analysis.follow_marker_found)
+        self.assertFalse(analysis.needs_review)
 
     def test_dhash_is_stable_for_small_brightness_change(self):
         gradient = np.tile(np.arange(96, dtype=np.uint8), (96, 1))

@@ -341,13 +341,16 @@ def analyze_row(
     config: dict[str, Any],
 ) -> RowAnalysis:
     width, height = row_image.size
-    follow_marker = any("关注了你" in item.text.replace(" ", "") for item in items)
+    follow_marker = any(
+        any(marker in item.text.replace(" ", "") for marker in ("关注了你", "回关"))
+        for item in items
+    )
     candidates = [
         item
         for item in items
         if item.left >= width * 0.15
         and item.left <= width * 0.72
-        and (item.top + item.bottom) / 2 <= height * 0.58
+        and (item.top + item.bottom) / 2 <= height * 0.55
         and not ignored_ocr_text(item.text)
     ]
     candidates.sort(key=lambda item: (item.top, -item.confidence, item.left))
@@ -367,7 +370,7 @@ def analyze_row(
     if nickname and confidence < config["ocr"]["minimum_name_confidence"]:
         reasons.append(f"昵称OCR置信度较低：{confidence:.3f}")
     if not follow_marker:
-        reasons.append("未识别到“关注了你”")
+        reasons.append("未识别到“关注了你”或“回关”标记")
     if partial:
         reasons.append("该条目位于截图边缘，内容可能不完整")
 
