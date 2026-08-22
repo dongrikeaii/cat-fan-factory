@@ -114,7 +114,7 @@ templates/my-cat-v2/
 └─ template.json        可选
 ```
 
-仓库内置 `classic-cat`、`Orange Cat` 和 `Bite` 三个模板，可双击 `03_切换模板.bat` 切换。`Bite` 的嘴部前景会盖住粉丝卡片或评论卡片的上沿。
+仓库内置 `classic-cat`、`Orange Cat`、`Bite` 和 `Bite-cat` 四个模板，可双击 `03_切换模板.bat` 切换。`Bite` 与 `Bite-cat` 的嘴部前景会盖住粉丝卡片或评论卡片的上沿，其中 `Bite-cat` 是嘴部覆盖范围更小的调整版。
 
 操作步骤：
 
