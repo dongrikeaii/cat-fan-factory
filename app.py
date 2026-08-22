@@ -855,6 +855,7 @@ def sync_feishu(
     config: dict[str, Any],
     latest_batches: int | None = None,
     dry_run: bool = False,
+    batch_names: list[str] | None = None,
 ) -> None:
     client = create_feishu_client()
     candidates = collect_candidates(
@@ -862,16 +863,19 @@ def sync_feishu(
         project_path(config["paths"]["database"]),
     )
     selected_batches: list[str] = []
-    if latest_batches is not None:
+    if batch_names is not None:
+        selected_batches = list(batch_names)
+    elif latest_batches is not None:
         selected_batches = select_latest_batch_names(
             project_path(config["paths"]["output_batches"]),
             latest_batches,
         )
+    if batch_names is not None or latest_batches is not None:
         allowed = set(selected_batches)
         candidates = [
             candidate for candidate in candidates if candidate.batch_name in allowed
         ]
-        print("限定批次：" + "、".join(selected_batches))
+        print("限定批次：" + ("、".join(selected_batches) or "无"))
     unsearchable = [
         candidate for candidate in candidates if not is_searchable_nickname(candidate.nickname)
     ]
@@ -904,6 +908,36 @@ def sync_feishu(
         f"新增 {result['uploaded']}，跳过重复 {result['skipped']}，"
         f"失败 {result['failed']}。"
     )
+
+
+def process_and_sync_feishu(
+    config: dict[str, Any],
+    assume_yes: bool = False,
+) -> None:
+    batches_root = project_path(config["paths"]["output_batches"])
+    before = {
+        path.name for path in batches_root.iterdir() if path.is_dir()
+    } if batches_root.exists() else set()
+    reports = process_inbox(config)
+    if not reports:
+        print("没有处理新的截图，因此没有上传飞书。")
+        return
+    after = {
+        path.name for path in batches_root.iterdir() if path.is_dir()
+    }
+    new_batches = sorted(after - before)
+    if not new_batches:
+        raise FeishuSyncError("处理完成但未找到本次新批次，已停止上传。")
+
+    print("\n本次处理完成，先预览即将上传的正式成品：")
+    sync_feishu(config, dry_run=True, batch_names=new_batches)
+    if not assume_yes:
+        answer = input("\n输入 UPLOAD 确认上传本次批次，直接回车则取消：").strip()
+        if answer != "UPLOAD":
+            print("已取消上传；本地批次和成品均已保留。")
+            return
+    print("\n开始上传本次批次到飞书：")
+    sync_feishu(config, batch_names=new_batches)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -939,6 +973,14 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="只预览将要同步的记录，不上传",
     )
+    process_sync = subparsers.add_parser(
+        "process-and-sync", help="批量处理 inbox 并只上传本次新批次"
+    )
+    process_sync.add_argument(
+        "--yes",
+        action="store_true",
+        help="跳过 UPLOAD 确认，仅用于明确授权的自动化运行",
+    )
     return parser
 
 
@@ -970,6 +1012,8 @@ def main() -> int:
             test_feishu_connection()
         elif arguments.command == "sync-feishu":
             sync_feishu(config, arguments.latest_batches, arguments.dry_run)
+        elif arguments.command == "process-and-sync":
+            process_and_sync_feishu(config, arguments.yes)
     except FeishuSyncError as exc:
         print(f"飞书操作失败：{exc}", file=sys.stderr)
         return 1

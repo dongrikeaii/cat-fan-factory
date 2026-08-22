@@ -119,6 +119,8 @@ templates/my-cat-v2/
 4. 程序把稳定的去重键写入飞书；另一台电脑同步时会先读取远端去重键，避免重复上传。
 5. 上传失败会保留本地图片和同步状态，再次双击即可重试。
 
+需要一次放入多张截图时，可以把它们全部复制到 `inbox`，再双击 `08_批量处理并上传飞书.bat`。程序会把这些截图放进同一个新批次，先显示上传预览；只有输入大写 `UPLOAD` 后，才会上传本次新批次。历史批次、待复核结果和纯符号占位昵称不会被上传。
+
 第一次接入时，Agent可以运行下面的命令创建一条不含粉丝信息的连接测试记录：
 
 ```powershell
@@ -139,6 +141,7 @@ templates/my-cat-v2/
 | `05_查看状态.bat` | 查看模板、批次和去重统计 |
 | `06_配置飞书.bat` | 保存目标表格、检查权限并补齐字段 |
 | `07_同步飞书.bat` | 上传正式成品并执行跨电脑远端去重 |
+| `08_批量处理并上传飞书.bat` | 处理 inbox 全部截图，确认后只上传本次新批次 |
 
 ## 六、命令行与开发验证
 
@@ -153,6 +156,7 @@ templates/my-cat-v2/
 .\.venv\Scripts\python.exe app.py sync-feishu
 .\.venv\Scripts\python.exe app.py sync-feishu --latest-batches 2 --dry-run
 .\.venv\Scripts\python.exe app.py sync-feishu --latest-batches 2
+.\.venv\Scripts\python.exe app.py process-and-sync
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
 

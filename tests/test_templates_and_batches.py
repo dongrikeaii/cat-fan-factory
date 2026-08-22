@@ -44,6 +44,36 @@ def make_template(root: Path, name: str, alpha: int) -> None:
 
 
 class TemplateAndBatchTests(unittest.TestCase):
+    def test_process_and_sync_targets_only_the_new_batch(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            batches = root / "output" / "batches"
+            (batches / "old-batch").mkdir(parents=True)
+            config = {
+                "paths": {
+                    "output_batches": "output/batches",
+                }
+            }
+
+            def fake_process(_config):
+                (batches / "new-batch").mkdir()
+                return [{"source": "one.jpg"}]
+
+            with patch.object(app, "ROOT", root):
+                with patch.object(app, "process_inbox", side_effect=fake_process):
+                    with patch.object(app, "sync_feishu") as sync:
+                        with redirect_stdout(io.StringIO()):
+                            app.process_and_sync_feishu(config, assume_yes=True)
+            self.assertEqual(2, sync.call_count)
+            self.assertEqual(
+                {"dry_run": True, "batch_names": ["new-batch"]},
+                sync.call_args_list[0].kwargs,
+            )
+            self.assertEqual(
+                {"batch_names": ["new-batch"]},
+                sync.call_args_list[1].kwargs,
+            )
+
     def test_searchable_nickname_requires_a_letter_or_number(self):
         self.assertFalse(app.is_searchable_nickname("..."))
         self.assertFalse(app.is_searchable_nickname("✨"))

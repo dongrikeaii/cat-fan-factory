@@ -16,6 +16,7 @@ class LauncherTests(unittest.TestCase):
             "05_查看状态.bat",
             "06_配置飞书.bat",
             "07_同步飞书.bat",
+            "08_批量处理并上传飞书.bat",
         ):
             content = (ROOT / name).read_bytes()
             self.assertIn(b"\r\n", content, name)
