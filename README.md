@@ -151,6 +151,8 @@ templates/my-cat-v2/
 .\.venv\Scripts\python.exe app.py configure-feishu --url "https://example.feishu.cn/base/BASE_TOKEN?table=TABLE_ID"
 .\.venv\Scripts\python.exe app.py test-feishu
 .\.venv\Scripts\python.exe app.py sync-feishu
+.\.venv\Scripts\python.exe app.py sync-feishu --latest-batches 2 --dry-run
+.\.venv\Scripts\python.exe app.py sync-feishu --latest-batches 2
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
 

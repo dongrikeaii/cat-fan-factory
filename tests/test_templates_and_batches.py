@@ -44,6 +44,27 @@ def make_template(root: Path, name: str, alpha: int) -> None:
 
 
 class TemplateAndBatchTests(unittest.TestCase):
+    def test_searchable_nickname_requires_a_letter_or_number(self):
+        self.assertFalse(app.is_searchable_nickname("..."))
+        self.assertFalse(app.is_searchable_nickname("✨"))
+        self.assertTrue(app.is_searchable_nickname("輒..."))
+        self.assertTrue(app.is_searchable_nickname("HELLO77"))
+
+    def test_select_latest_batch_names(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            batches = root / "output" / "batches"
+            for name in (
+                "2026-08-21_21-56-09",
+                "2026-08-21_22-10-03",
+                "2026-08-21_22-08-02",
+            ):
+                (batches / name).mkdir(parents=True)
+            self.assertEqual(
+                ["2026-08-21_22-10-03", "2026-08-21_22-08-02"],
+                app.select_latest_batch_names(batches, 2),
+            )
+
     def test_mask_is_exact_alpha_and_template_can_switch(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

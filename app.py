@@ -834,14 +834,65 @@ def test_feishu_connection() -> None:
     print("请在表格中确认图片可见；测试记录之后可手动删除。")
 
 
-def sync_feishu(config: dict[str, Any]) -> None:
+def select_latest_batch_names(batches_root: Path, count: int) -> list[str]:
+    if count < 1:
+        raise FeishuSyncError("--latest-batches 必须是大于 0 的整数。")
+    if not batches_root.exists():
+        return []
+    directories = sorted(
+        (path for path in batches_root.iterdir() if path.is_dir()),
+        key=lambda path: path.name,
+        reverse=True,
+    )
+    return [path.name for path in directories[:count]]
+
+
+def is_searchable_nickname(value: str) -> bool:
+    return any(character.isalnum() for character in value)
+
+
+def sync_feishu(
+    config: dict[str, Any],
+    latest_batches: int | None = None,
+    dry_run: bool = False,
+) -> None:
     client = create_feishu_client()
     candidates = collect_candidates(
         ROOT,
         project_path(config["paths"]["database"]),
     )
+    selected_batches: list[str] = []
+    if latest_batches is not None:
+        selected_batches = select_latest_batch_names(
+            project_path(config["paths"]["output_batches"]),
+            latest_batches,
+        )
+        allowed = set(selected_batches)
+        candidates = [
+            candidate for candidate in candidates if candidate.batch_name in allowed
+        ]
+        print("限定批次：" + "、".join(selected_batches))
+    unsearchable = [
+        candidate for candidate in candidates if not is_searchable_nickname(candidate.nickname)
+    ]
+    if unsearchable:
+        print("以下昵称无法用于搜索，已排除并保留在本地等待人工修正：")
+        for candidate in unsearchable:
+            print(f"- {candidate.nickname} | {candidate.batch_name}")
+        candidates = [
+            candidate for candidate in candidates if is_searchable_nickname(candidate.nickname)
+        ]
     if not candidates:
         print("没有可同步的正式成品。待复核图片不会自动上传。")
+        return
+    print(f"准备同步 {len(candidates)} 条正式成品：")
+    for candidate in candidates:
+        print(
+            f"- {candidate.nickname} | {candidate.batch_name} | "
+            f"查询码 {candidate.query_code}"
+        )
+    if dry_run:
+        print("预览结束：未向飞书上传任何记录。")
         return
     state = SyncState(FEISHU_STATE_PATH)
     try:
@@ -874,7 +925,20 @@ def build_parser() -> argparse.ArgumentParser:
     )
     feishu_setup.add_argument("--url", help="飞书多维表格完整网址")
     subparsers.add_parser("test-feishu", help="上传一条飞书连接测试记录")
-    subparsers.add_parser("sync-feishu", help="同步正式成品到飞书多维表格")
+    feishu_sync = subparsers.add_parser(
+        "sync-feishu", help="同步正式成品到飞书多维表格"
+    )
+    feishu_sync.add_argument(
+        "--latest-batches",
+        type=int,
+        metavar="N",
+        help="只同步按文件夹名称排序最新的 N 个批次",
+    )
+    feishu_sync.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="只预览将要同步的记录，不上传",
+    )
     return parser
 
 
@@ -905,7 +969,7 @@ def main() -> int:
         elif arguments.command == "test-feishu":
             test_feishu_connection()
         elif arguments.command == "sync-feishu":
-            sync_feishu(config)
+            sync_feishu(config, arguments.latest_batches, arguments.dry_run)
     except FeishuSyncError as exc:
         print(f"飞书操作失败：{exc}", file=sys.stderr)
         return 1
