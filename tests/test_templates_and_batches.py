@@ -151,6 +151,39 @@ class TemplateAndBatchTests(unittest.TestCase):
             self.assertTrue((directory / "paw_mask_debug.png").is_file())
             self.assertIn("可自动转换", captured.getvalue())
 
+    def test_top_anchor_keeps_different_card_heights_aligned(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary) / "fixed-top"
+            directory.mkdir()
+            Image.new("RGB", (100, 200), "black").save(directory / "cat_base.png")
+            Image.new("RGBA", (100, 200), (0, 0, 0, 0)).save(
+                directory / "paw_foreground.png"
+            )
+            options = dict(TEMPLATE_DEFAULTS)
+            options.update(
+                {
+                    "card_width_ratio": 0.5,
+                    "angle_degrees": 0,
+                    "top_y_ratio": 0.25,
+                    "shadow_blur": 0,
+                    "shadow_opacity": 0,
+                }
+            )
+            template = app.TemplateBundle(
+                name="fixed-top",
+                directory=directory,
+                base=directory / "cat_base.png",
+                paw_overlay=directory / "paw_foreground.png",
+                mask_debug=directory / "paw_mask_debug.png",
+                options=options,
+            )
+
+            short = app.compose_card(Image.new("RGB", (100, 20), "red"), template)
+            tall = app.compose_card(Image.new("RGB", (100, 80), "red"), template)
+
+            self.assertEqual(50, short.getbbox()[1])
+            self.assertEqual(50, tall.getbbox()[1])
+
     def test_each_processing_run_gets_a_unique_timestamp_folder(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

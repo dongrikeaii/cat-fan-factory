@@ -29,5 +29,6 @@ templates/版本名/
 - `card_width_ratio`：消息卡片宽度相对底图宽度。
 - `angle_degrees`：卡片旋转角度。
 - `center_x_ratio`、`center_y_ratio`：卡片中心位置。
+- `top_y_ratio`：可选，将不同高度卡片的上边缘固定在底图同一高度；设置后会代替 `center_y_ratio` 的纵向定位。
 - `shadow_blur`、`shadow_opacity`：阴影模糊与透明度。
 - `shadow_offset_x`、`shadow_offset_y`：阴影偏移像素。

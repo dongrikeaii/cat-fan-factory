@@ -716,7 +716,7 @@ def load_template_bundle(
     if template_config.exists():
         with template_config.open("r", encoding="utf-8") as handle:
             overrides = json.load(handle)
-        unknown = set(overrides) - set(options)
+        unknown = set(overrides) - (set(options) | {"top_y_ratio"})
         if unknown:
             raise ValueError(
                 f"模板 {name} 的 template.json 包含未知字段：{', '.join(sorted(unknown))}"
@@ -861,7 +861,10 @@ def compose_card(row_image: Image.Image, template: TemplateBundle) -> Image.Imag
     center_x = int(base.width * options["center_x_ratio"])
     center_y = int(base.height * options["center_y_ratio"])
     left = center_x - rotated.width // 2
-    top = center_y - rotated.height // 2
+    if options.get("top_y_ratio") is None:
+        top = center_y - rotated.height // 2
+    else:
+        top = int(base.height * options["top_y_ratio"])
 
     shadow_alpha = rotated.getchannel("A").filter(
         ImageFilter.GaussianBlur(options["shadow_blur"])
