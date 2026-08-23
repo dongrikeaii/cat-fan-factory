@@ -6,10 +6,10 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class LauncherTests(unittest.TestCase):
-    def test_private_comment_screenshots_are_gitignored(self):
+    def test_all_private_screenshots_use_the_unified_inbox(self):
         rules = (ROOT / ".gitignore").read_text(encoding="utf-8")
-        self.assertIn("comment_inbox/*", rules)
-        self.assertIn("!comment_inbox/.gitkeep", rules)
+        self.assertIn("inbox/*", rules)
+        self.assertNotIn("comment_inbox", rules)
 
     def test_batch_files_use_windows_line_endings_and_absolute_paths(self):
         for name in (
@@ -22,7 +22,6 @@ class LauncherTests(unittest.TestCase):
             "06_配置飞书.bat",
             "07_同步飞书.bat",
             "08_批量处理并上传飞书.bat",
-            "09_评论区截图测试.bat",
         ):
             content = (ROOT / name).read_bytes()
             self.assertIn(b"\r\n", content, name)

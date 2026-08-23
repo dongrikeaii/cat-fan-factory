@@ -9,7 +9,6 @@ __pycache__/
 archive/
 assets/
 inbox/*
-comment_inbox/*
 needs_review/
 output/*
 data/*
@@ -20,7 +19,6 @@ templates/*/cat_base.jpeg
 templates/*/cat_base.webp
 
 !inbox/.gitkeep
-!comment_inbox/.gitkeep
 !output/.gitkeep
 !data/.gitkeep
 

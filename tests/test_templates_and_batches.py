@@ -61,7 +61,7 @@ class TemplateAndBatchTests(unittest.TestCase):
 
             with patch.object(app, "ROOT", root):
                 with patch.object(app, "process_inbox", side_effect=fake_process):
-                    with patch.object(app, "sync_feishu") as sync:
+                    with patch.object(app, "sync_feishu", return_value=1) as sync:
                         with redirect_stdout(io.StringIO()):
                             app.process_and_sync_feishu(config, assume_yes=True)
             self.assertEqual(2, sync.call_count)
@@ -73,6 +73,28 @@ class TemplateAndBatchTests(unittest.TestCase):
                 {"batch_names": ["new-batch"]},
                 sync.call_args_list[1].kwargs,
             )
+
+    def test_process_and_sync_does_not_prompt_when_preview_is_empty(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            batches = root / "output" / "batches"
+            batches.mkdir(parents=True)
+            config = {"paths": {"output_batches": "output/batches"}}
+
+            def fake_process(_config):
+                (batches / "empty-batch").mkdir()
+                return [{"source": "one.jpg"}]
+
+            with patch.object(app, "ROOT", root):
+                with patch.object(app, "process_inbox", side_effect=fake_process):
+                    with patch.object(app, "sync_feishu", return_value=0) as sync:
+                        with patch("builtins.input") as prompt:
+                            with redirect_stdout(io.StringIO()):
+                                app.process_and_sync_feishu(config)
+            sync.assert_called_once_with(
+                config, dry_run=True, batch_names=["empty-batch"]
+            )
+            prompt.assert_not_called()
 
     def test_searchable_nickname_requires_a_letter_or_number(self):
         self.assertFalse(app.is_searchable_nickname("..."))

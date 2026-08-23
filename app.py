@@ -940,7 +940,7 @@ def process_screenshot(
         from comment_prototype import detect_comment_rows, is_comment_screenshot
 
         full_items = ocr.read(image)
-        if is_comment_screenshot(full_items):
+        if is_comment_screenshot(full_items, image):
             rows = detect_comment_rows(
                 image,
                 full_items,
@@ -1225,7 +1225,7 @@ def sync_feishu(
     latest_batches: int | None = None,
     dry_run: bool = False,
     batch_names: list[str] | None = None,
-) -> None:
+) -> int:
     client = create_feishu_client()
     candidates = collect_candidates(
         ROOT,
@@ -1257,7 +1257,7 @@ def sync_feishu(
         ]
     if not candidates:
         print("没有可同步的正式成品。待复核图片不会自动上传。")
-        return
+        return 0
     print(f"准备同步 {len(candidates)} 条正式成品：")
     for candidate in candidates:
         print(
@@ -1266,7 +1266,7 @@ def sync_feishu(
         )
     if dry_run:
         print("预览结束：未向飞书上传任何记录。")
-        return
+        return len(candidates)
     state = SyncState(FEISHU_STATE_PATH)
     try:
         result = sync_candidates(client, candidates, state)
@@ -1277,6 +1277,7 @@ def sync_feishu(
         f"新增 {result['uploaded']}，跳过重复 {result['skipped']}，"
         f"失败 {result['failed']}。"
     )
+    return len(candidates)
 
 
 def process_and_sync_feishu(
@@ -1299,7 +1300,9 @@ def process_and_sync_feishu(
         raise FeishuSyncError("处理完成但未找到本次新批次，已停止上传。")
 
     print("\n本次处理完成，先预览即将上传的正式成品：")
-    sync_feishu(config, dry_run=True, batch_names=new_batches)
+    candidate_count = sync_feishu(config, dry_run=True, batch_names=new_batches)
+    if candidate_count == 0:
+        return
     if not assume_yes:
         answer = input("\n输入 UPLOAD 确认上传本次批次，直接回车则取消：").strip()
         if answer != "UPLOAD":

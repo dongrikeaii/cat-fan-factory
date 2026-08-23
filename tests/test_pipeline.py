@@ -220,6 +220,9 @@ class PipelineTests(unittest.TestCase):
                     database.find_duplicate(second, "Orange Cat", "comment")
                 )
                 self.assertIsNone(
+                    database.find_duplicate(first, "Bite-cat", "comment")
+                )
+                self.assertIsNone(
                     database.find_duplicate(first, "Orange Cat", "follower")
                 )
             finally:

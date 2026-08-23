@@ -67,8 +67,12 @@ class FeishuSyncTests(unittest.TestCase):
         second_comment = make_dedup_key(
             "stella", "abc", "def", "Orange Cat", "comment", "second"
         )
+        bite_comment = make_dedup_key(
+            "stella", "abc", "def", "Bite-cat", "comment", "first"
+        )
         self.assertNotEqual(first_comment, second_comment)
         self.assertNotEqual(orange, first_comment)
+        self.assertNotEqual(first_comment, bite_comment)
 
     def test_client_token_is_stable_uuid4(self):
         first = make_client_token("same operation")

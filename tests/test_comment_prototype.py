@@ -2,12 +2,17 @@ import sys
 import unittest
 from pathlib import Path
 
-from PIL import Image
+from PIL import Image, ImageDraw
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app import OcrItem
-from comment_prototype import detect_comment_rows, is_reply_anchor
+from comment_prototype import (
+    detect_comment_avatar_bounds,
+    detect_comment_rows,
+    is_comment_screenshot,
+    is_reply_anchor,
+)
 
 
 class CommentPrototypeTests(unittest.TestCase):
@@ -24,6 +29,38 @@ class CommentPrototypeTests(unittest.TestCase):
         self.assertFalse(
             is_reply_anchor(OcrItem("请回复", 0.99, 120, 220, 250, 255))
         )
+
+    def test_multiple_reply_anchors_identify_headerless_comment_screenshot(self):
+        items = [
+            OcrItem("1分钟前·山东 回复", 0.99, 120, 300, 370, 334),
+            OcrItem("回复", 0.99, 310, 685, 369, 713),
+        ]
+        self.assertTrue(is_comment_screenshot(items))
+
+    def test_avatar_bounds_include_first_and_last_variable_height_comments(self):
+        image = Image.new("RGB", (828, 900), "white")
+        draw = ImageDraw.Draw(image)
+        draw.ellipse((32, -20, 104, 52), fill="black")
+        draw.ellipse((32, 200, 104, 272), fill="black")
+        draw.ellipse((32, 500, 104, 572), fill="black")
+        items = [
+            OcrItem("第一条", 0.98, 120, 0, 240, 30),
+            OcrItem("回复", 0.99, 320, 140, 380, 170),
+            OcrItem("第二条", 0.98, 120, 210, 240, 240),
+            OcrItem("回复", 0.99, 320, 440, 380, 470),
+            OcrItem("第三条", 0.98, 120, 510, 240, 540),
+        ]
+
+        avatar_bounds = detect_comment_avatar_bounds(image)
+        rows = detect_comment_rows(image, items, 0.72)
+
+        self.assertEqual(3, len(avatar_bounds))
+        self.assertEqual(
+            ["第一条", "第二条", "第三条"], [row.nickname for row in rows]
+        )
+        self.assertFalse(rows[0].needs_review)
+        self.assertTrue(rows[-1].needs_review)
+        self.assertIn("截图底部未检测到", rows[-1].review_reasons[0])
 
     def test_complete_first_row_after_filters_is_included(self):
         image = Image.new("RGB", (828, 900), "white")
