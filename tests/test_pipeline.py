@@ -48,6 +48,26 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(10, len(rows))
         self.assertTrue(rows[-1].partial)
 
+    def test_header_ellipsis_does_not_hide_red_button_rows(self):
+        image = Image.new("RGB", (828, 1792), "white")
+        draw = ImageDraw.Draw(image)
+        for center_x in (757, 773, 789):
+            draw.ellipse(
+                (center_x - 3, 136, center_x + 3, 142),
+                fill="black",
+            )
+        for center_y in [268 + 168 * index for index in range(10)]:
+            draw.rounded_rectangle(
+                (568, center_y - 28, 728, center_y + 28),
+                radius=12,
+                fill=(255, 43, 85),
+            )
+
+        rows = detect_rows(image, self.config)
+
+        self.assertEqual(10, len(rows))
+        self.assertEqual(268, round(rows[0].center))
+
     def test_ellipsis_markers_locate_rows_without_red_buttons(self):
         image = Image.new("RGB", (828, 1792), "white")
         draw = ImageDraw.Draw(image)

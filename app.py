@@ -412,36 +412,54 @@ def detect_ellipsis_markers(
     return sorted(markers, key=lambda item: item[0])
 
 
+def detect_red_button_markers(
+    rgb: np.ndarray, options: dict[str, Any]
+) -> list[tuple[float, tuple[int, int]]]:
+    height, width = rgb.shape[:2]
+    red = (
+        (rgb[:, :, 0] >= options["red_r_min"])
+        & (rgb[:, :, 1] <= options["red_g_max"])
+        & (rgb[:, :, 2] <= options["red_b_max"])
+        & (
+            (rgb[:, :, 0].astype(np.int16) - rgb[:, :, 1])
+            >= options["red_gap_min"]
+        )
+    ).astype(np.uint8)
+    count, _, stats, centroids = cv2.connectedComponentsWithStats(red, 8)
+    markers: list[tuple[float, tuple[int, int]]] = []
+    for label in range(1, count):
+        x, y, component_width, component_height, area = stats[label]
+        if x < width * options["min_x_ratio"]:
+            continue
+        if component_width < width * options["min_width_ratio"]:
+            continue
+        if component_height < max(20, height * options["min_height_ratio"]):
+            continue
+        if area < options["min_area"]:
+            continue
+        markers.append(
+            (
+                float(centroids[label][1]),
+                (int(y), int(y + component_height)),
+            )
+        )
+    return sorted(markers, key=lambda item: item[0])
+
+
 def detect_rows(image: Image.Image, config: dict[str, Any]) -> list[DetectedRow]:
     options = config["row_detection"]
     rgb = np.asarray(image.convert("RGB"))
     width, height = image.size
-    ellipsis_markers = detect_ellipsis_markers(rgb)
-    centers = [item[0] for item in ellipsis_markers]
-    component_bounds = [item[1] for item in ellipsis_markers]
-    if not centers:
-        red = (
-            (rgb[:, :, 0] >= options["red_r_min"])
-            & (rgb[:, :, 1] <= options["red_g_max"])
-            & (rgb[:, :, 2] <= options["red_b_max"])
-            & (
-                (rgb[:, :, 0].astype(np.int16) - rgb[:, :, 1])
-                >= options["red_gap_min"]
-            )
-        ).astype(np.uint8)
-        count, _, stats, centroids = cv2.connectedComponentsWithStats(red, 8)
-        for label in range(1, count):
-            x, y, component_width, component_height, area = stats[label]
-            if x < width * options["min_x_ratio"]:
-                continue
-            if component_width < width * options["min_width_ratio"]:
-                continue
-            if component_height < max(20, height * options["min_height_ratio"]):
-                continue
-            if area < options["min_area"]:
-                continue
-            centers.append(float(centroids[label][1]))
-            component_bounds.append((int(y), int(y + component_height)))
+    content_top = height * 0.1
+    ellipsis_markers = [
+        marker for marker in detect_ellipsis_markers(rgb) if marker[0] >= content_top
+    ]
+    red_markers = detect_red_button_markers(rgb, options)
+    selected_markers = (
+        red_markers if len(red_markers) > len(ellipsis_markers) else ellipsis_markers
+    )
+    centers = [item[0] for item in selected_markers]
+    component_bounds = [item[1] for item in selected_markers]
 
     if not centers:
         if width >= 500 and width / max(height, 1) >= 3:
